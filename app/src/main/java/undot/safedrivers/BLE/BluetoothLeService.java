@@ -16,6 +16,9 @@
 
 package undot.safedrivers.BLE;
 
+import android.app.Activity;
+import android.app.AlertDialog;
+import android.app.NotificationManager;
 import android.app.Service;
 import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
@@ -29,11 +32,18 @@ import android.bluetooth.BluetoothProfile;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Binder;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Vibrator;
+import android.support.v4.app.NotificationCompat;
 import android.util.Log;
+import android.widget.Toast;
 
 import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
 import java.util.List;
+
+import undot.safedrivers.R;
 
 
 /**
@@ -42,6 +52,40 @@ import java.util.List;
  */
 public class BluetoothLeService extends Service {
     private final static String TAG = BluetoothLeService.class.getSimpleName();
+
+    private static BluetoothGattCharacteristic mSCharacteristic, mModelNumberCharacteristic, mSerialPortCharacteristic, mCommandCharacteristic;
+    BluetoothLeService mBluetoothLeService;
+    private ArrayList<ArrayList<BluetoothGattCharacteristic>> mGattCharacteristics =
+            new ArrayList<ArrayList<BluetoothGattCharacteristic>>();
+    private boolean mScanning =false;
+    AlertDialog mScanDeviceDialog;
+    private String mDeviceName;
+    private String mDeviceAddress;
+    public enum connectionStateEnum{isNull, isScanning, isToScan, isConnecting , isConnected, isDisconnecting};
+    private static final int REQUEST_ENABLE_BT = 1;
+
+    private Handler mHandler= new Handler();
+
+    public boolean mConnected = false;
+    private int mBaudrate=115200;	//set the default baud rate to 115200
+    private String mPassword="AT+PASSWOR=DFRobot\r\n";
+
+
+    private String mBaudrateBuffer = "AT+CURRUART="+mBaudrate+"\r\n";
+
+
+    boolean notified=false;
+    public static final String SerialPortUUID="0000dfb1-0000-1000-8000-00805f9b34fb";
+    public static final String CommandUUID="0000dfb2-0000-1000-8000-00805f9b34fb";
+    public static final String ModelNumberStringUUID="00002a24-0000-1000-8000-00805f9b34fb";
+
+
+    int rssi_value=0;
+    int sensor_value_sum=0;
+    int sensor_counter=0;
+    int sensor_value=0;
+    int rssicounter=0;
+
 
     private BluetoothManager mBluetoothManager;
     private BluetoothAdapter mBluetoothAdapter;
@@ -87,6 +131,14 @@ public class BluetoothLeService extends Service {
 //    public final static UUID UUID_HEART_RATE_MEASUREMENT =
 //            UUID.fromString(SampleGattAttributes.HEART_RATE_MEASUREMENT);
 
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        initialize();
+
+    }
+
     // Implements callback methods for GATT events that the app cares about.  For example,
     // connection change and services discovered.
     private final BluetoothGattCallback mGattCallback = new BluetoothGattCallback() {
@@ -99,6 +151,7 @@ public class BluetoothLeService extends Service {
                 mConnectionState = STATE_CONNECTED;
                 broadcastUpdate(intentAction);
                 Log.i(TAG, "Connected to GATT server.");
+                mBluetoothAdapter.stopLeScan(mLeScanCallback);
                 // Attempts to discover services after successful connection.
                 if(mBluetoothGatt.discoverServices())
                 {
@@ -121,15 +174,23 @@ public class BluetoothLeService extends Service {
         @Override
         public void onReadRemoteRssi(BluetoothGatt gatt, int rssi, int status) {
             super.onReadRemoteRssi(gatt, rssi, status);
-            Log.d("rssi service", rssi + "");
-
-            broadcastUpdate(rssi);
+            Log.d("rssionremote", rssi + "");
+            if(rssi<-90) {
+              //  rssi_value = rssi;
+                rssicounter++;
+            }
+            //broadcastUpdate(rssi);
         }
         @Override
         public void onServicesDiscovered(BluetoothGatt gatt, int status) {
         	System.out.println("onServicesDiscovered "+status);
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 broadcastUpdate(ACTION_GATT_SERVICES_DISCOVERED);
+                for (BluetoothGattService gattService : getSupportedGattServices()) {
+                    System.out.println("ACTION_GATT_SERVICES_DISCOVERED  "+
+                            gattService.getUuid().toString());
+                }
+                getGattServices(getSupportedGattServices());
             } else {
                 Log.w(TAG, "onServicesDiscovered received: " + status);
             }
@@ -277,8 +338,29 @@ public class BluetoothLeService extends Service {
                                          BluetoothGattCharacteristic characteristic,
                                          int status) {
             if (status == BluetoothGatt.GATT_SUCCESS) {
-                System.out.println("onCharacteristicRead  "+characteristic.getUuid().toString());
-                broadcastUpdate(ACTION_DATA_AVAILABLE, characteristic);
+                gatt.readRemoteRssi();
+                System.out.println("onCharacteristicRead  " + characteristic.getUuid().toString());
+                if(mSCharacteristic==mModelNumberCharacteristic)
+                {
+                    if (new String(characteristic.getValue()).toUpperCase().startsWith("DF BLUNO")) {
+                        setCharacteristicNotification(mSCharacteristic, false);
+                        mSCharacteristic=mCommandCharacteristic;
+                        mSCharacteristic.setValue(mPassword);
+                        writeCharacteristic(mSCharacteristic);
+                        mSCharacteristic.setValue(mBaudrateBuffer);
+                        writeCharacteristic(mSCharacteristic);
+                        mSCharacteristic=mSerialPortCharacteristic;
+                        setCharacteristicNotification(mSCharacteristic, true);
+                        mConnectionState = STATE_CONNECTED;
+
+                    }
+                    else {
+                        Toast.makeText(getBaseContext(), "Please select DFRobot devices",Toast.LENGTH_SHORT).show();
+                    }
+                }
+                else if (mSCharacteristic==mSerialPortCharacteristic) {
+                //    Log.d("data",new String(characteristic.getValue()));
+                }                broadcastUpdate(ACTION_DATA_AVAILABLE, characteristic);
             }
         }
         @Override
@@ -290,10 +372,74 @@ public class BluetoothLeService extends Service {
         @Override
         public void onCharacteristicChanged(BluetoothGatt gatt,
                                             BluetoothGattCharacteristic characteristic) {
-        	System.out.println("onCharacteristicChanged  "+new String(characteristic.getValue()));
-            broadcastUpdate(ACTION_DATA_AVAILABLE, characteristic);
+        	//System.out.println("onCharacteristicChanged  "+new String(characteristic.getValue()));
+           //0 Log.d("data", new String(characteristic.getValue()));
+            gatt.readRemoteRssi();
+            // TODO Auto-generated method stub
+            String[] values = new String[1];
+            values[0] = new String(characteristic.getValue()).substring(0,1);
+
+
+              //  Log.d("sitting",Integer.decode(values[0].replaceAll("[^\\.0123456789]", "").substring(0,1))+"");
+
+                if(Integer.decode(values[0].replaceAll("[^\\.0123456789]", ""))==1 || Integer.decode(values[0].replaceAll("[^\\.0123456789]", ""))==0)
+                {
+                   // Log.d("is","numeric");
+                    sensor_value_sum+=Integer.decode(values[0].replaceAll("[^\\.0123456789]", ""));
+                    sensor_counter++;
+                    if(sensor_counter==10)
+                    {
+                        sensor_value= (sensor_value_sum/sensor_counter);
+                        Log.d("sensor value",sensor_value_sum+" "+ sensor_counter);
+                        sensor_counter=0;
+                        sensor_value_sum=0;
+
+                    }
+                }
+            Log.d("rssicounter", rssicounter + "");
+
+            if (rssicounter>10&&sensor_value==1)
+            {
+                Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
+                // Vibrate for 500 milliseconds
+                v.vibrate(500);
+                if(!notified) {
+                    NotificationCompat.Builder mBuilder =
+                            new NotificationCompat.Builder(getBaseContext())
+                                    .setSmallIcon(R.mipmap.ic_launcher)
+                                    .setContentTitle("תינוק באוטו")
+                                    .setContentText("רוץ קח אותו!");
+                    // Sets an ID for the notification
+                    int mNotificationId = 001;
+// Gets an instance of the NotificationManager service
+                    NotificationManager mNotifyMgr =
+                            (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+// Builds the notification and issues it.
+                    mNotifyMgr.notify(mNotificationId, mBuilder.build());
+                    notified=true;
+                }
+                rssicounter=0;
+            }
+            else if(rssicounter>10)
+            {
+                rssicounter=0;
+            }
+           // broadcastUpdate(ACTION_DATA_AVAILABLE, characteristic);
         }
     };
+
+    public static boolean isNumeric(String str)
+    {
+        try
+        {
+            double d = Double.parseDouble(str);
+        }
+        catch(NumberFormatException nfe)
+        {
+            return false;
+        }
+        return true;
+    }
     
     private void broadcastUpdate(final String action) {
         final Intent intent = new Intent(action);
@@ -376,7 +522,12 @@ public class BluetoothLeService extends Service {
         }
 
         mBluetoothAdapter = mBluetoothManager.getAdapter();
-        if (mBluetoothAdapter == null) {
+        if(mBluetoothAdapter!=null)
+        {
+            mBluetoothAdapter.startLeScan(mLeScanCallback);
+
+        }
+        else  {
             Log.e(TAG, "Unable to obtain a BluetoothAdapter.");
             return false;
         }
@@ -550,6 +701,75 @@ public class BluetoothLeService extends Service {
 
         return mBluetoothGatt.getServices();
     }
-    
-    
+    // Device scan callback.
+    private BluetoothAdapter.LeScanCallback mLeScanCallback = new BluetoothAdapter.LeScanCallback() {
+
+        @Override
+        public void onLeScan(final BluetoothDevice device, final int rssi,
+                             byte[] scanRecord) {
+            if(device.getName()!=null) {
+                Log.d("device", device.getName() + "");
+                if (device.getName().equals("BlunoV1.8")) {
+                    connect(device.getAddress());
+                   // Log.d("rssi service",rssi+"");
+
+                }
+            }
+            }
+
+    };
+
+    private void getGattServices(List<BluetoothGattService> gattServices) {
+        if (gattServices == null) return;
+        String uuid = null;
+        mModelNumberCharacteristic=null;
+        mSerialPortCharacteristic=null;
+        mCommandCharacteristic=null;
+        mGattCharacteristics = new ArrayList<ArrayList<BluetoothGattCharacteristic>>();
+
+        // Loops through available GATT Services.
+        for (BluetoothGattService gattService : gattServices) {
+            uuid = gattService.getUuid().toString();
+            System.out.println("displayGattServices + uuid="+uuid);
+
+            List<BluetoothGattCharacteristic> gattCharacteristics =
+                    gattService.getCharacteristics();
+            ArrayList<BluetoothGattCharacteristic> charas =
+                    new ArrayList<BluetoothGattCharacteristic>();
+
+            // Loops through available Characteristics.
+            for (BluetoothGattCharacteristic gattCharacteristic : gattCharacteristics) {
+                charas.add(gattCharacteristic);
+                uuid = gattCharacteristic.getUuid().toString();
+                if(uuid.equals(ModelNumberStringUUID)){
+                    mModelNumberCharacteristic=gattCharacteristic;
+                    System.out.println("mModelNumberCharacteristic  "+mModelNumberCharacteristic.getUuid().toString());
+                }
+                else if(uuid.equals(SerialPortUUID)){
+                    mSerialPortCharacteristic = gattCharacteristic;
+                    System.out.println("mSerialPortCharacteristic  "+mSerialPortCharacteristic.getUuid().toString());
+//                    updateConnectionState(R.string.comm_establish);
+                }
+                else if(uuid.equals(CommandUUID)){
+                    mCommandCharacteristic = gattCharacteristic;
+                    System.out.println("mSerialPortCharacteristic  "+mSerialPortCharacteristic.getUuid().toString());
+//                    updateConnectionState(R.string.comm_establish);
+                }
+            }
+            mGattCharacteristics.add(charas);
+        }
+
+        if (mModelNumberCharacteristic==null || mSerialPortCharacteristic==null || mCommandCharacteristic==null) {
+            Log.d("charactaristics","null");
+            Toast.makeText(getApplicationContext(),"characteristics null",Toast.LENGTH_SHORT);
+        }
+        else {
+            mSCharacteristic=mModelNumberCharacteristic;
+            setCharacteristicNotification(mSCharacteristic, true);
+            readCharacteristic(mSCharacteristic);
+        }
+
+    }
+
+
 }

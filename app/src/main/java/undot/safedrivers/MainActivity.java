@@ -10,6 +10,7 @@ import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
 
+import undot.safedrivers.BLE.BluetoothLeService;
 import undot.safedrivers.BLE.BlunoLibrary;
 
 public class MainActivity  extends BlunoLibrary {
@@ -28,9 +29,9 @@ public class MainActivity  extends BlunoLibrary {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
-        onCreateProcess();														//onCreate Process by BlunoLibrary
+      //  onCreateon();														//onCreate Process by BlunoLibrary
 
-        serialBegin(115200);													//set the Uart Baudrate on BLE chip to 115200
+      //  serialBegin(115200);													//set the Uart Baudrate on BLE chip to 115200
 
         serialReceivedText=(TextView) findViewById(R.id.serialReveicedText);	//initial the EditText of the received data
         serialSendText=(EditText) findViewById(R.id.serialSendText);			//initial the EditText of the sending data
@@ -61,7 +62,10 @@ public class MainActivity  extends BlunoLibrary {
     protected void onResume(){
         super.onResume();
         System.out.println("BlUNOActivity onResume");
-        onResumeProcess();														//onResume Process by BlunoLibrary
+        Intent gattServiceIntent = new Intent(getBaseContext(), BluetoothLeService.class);
+        startService(gattServiceIntent);
+
+//        onResumeProcess();														//onResume Process by BlunoLibrary
     }
 
 
@@ -75,7 +79,7 @@ public class MainActivity  extends BlunoLibrary {
     @Override
     protected void onPause() {
         super.onPause();
-        onPauseProcess();														//onPause Process by BlunoLibrary
+      //  onPauseProcess();														//onPause Process by BlunoLibrary
     }
 
     protected void onStop() {
@@ -144,7 +148,7 @@ public class MainActivity  extends BlunoLibrary {
             }
         Log.d("rssi value",rssi_value+"");
 
-        if (rssi_value<-90&&sensor_value==1)
+        if (rssi_value<-80&&sensor_value==1)
         {
             Vibrator v = (Vibrator) getSystemService(Context.VIBRATOR_SERVICE);
             // Vibrate for 500 milliseconds

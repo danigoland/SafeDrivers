@@ -465,6 +465,7 @@ public abstract  class BlunoLibrary  extends Activity{
 					mLeDeviceListAdapter.notifyDataSetChanged();
 					if (device.getName()!=null){
 					if(device.getName().equals("BlunoV1.8"))
+
 					{
 
 					setRSSI(rssi);
